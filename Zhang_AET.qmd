@@ -1,0 +1,155 @@
+---
+title: "Zhang_AET"
+author: "TP"
+format: html
+editor: visual
+---
+
+## Zhang Actual Evapotranspiration
+
+This script will utilize data from ClimateBC to calculate Zhang's AET (Zhang, 2004).
+
+## Loading necessary variables
+
+Zhang's equation utilizes PET and Precipitation data. Hargreaves PET and Precip data for the Adams Wtershed is accessible through the ClimateBC v7.4.
+
+```{r}
+library(terra)
+
+folder_path <- ("C:/Users/taypo/OneDrive/Documents/Grad Studies/Graduate Research/mDMC/Adams Raster Files/Monthly Climate Rasters")
+
+year_folders <- dir(folder_path, full.names = TRUE)
+
+monthly_dirs <- lapply(year_folders, list.files, full.names = TRUE,
+                       pattern = "^Eref[0-9]{2}\\.asc$|^PPT[0-9]{2}\\.asc$")
+
+iteration_table <- lapply(1:12, seq, to = 24, by = 12)
+
+sorted_data_lists <- lapply(monthly_dirs, function(x) {
+                            setNames(lapply(iteration_table, function(y) {
+                                            rast(x[y])
+                            }), month.name)
+})
+
+sorted_data_lists <- setNames(sorted_data_lists, basename(year_folders))
+
+```
+
+## Setting up Actual Evapotranspiration calculation
+
+Now the PET (Eref) and Precip (PPT) data are loaded into sorted lists, let's set up the calculation for AET. The w coefficient of 2.84 was chosen based on the optimized w for a forested catchment (Zhang 2004).
+
+```{r}
+calculate_aet <- function(ppt, eref) {
+  aet <- ppt * (1 + 2.84 * (eref/ppt)) / (1 + 2.84 * (eref/ppt) + ppt/eref)
+  return(aet)
+}
+```
+
+## Calculating AET for each year 
+
+Looping through each year and each month, extracting the necessary SpatRasters and calculating AET.
+
+```{r}
+# Loop through each year
+for (year in names(sorted_data_lists)) {
+  # Extract year from the year folder name
+  year_num <- as.numeric(sub("M", "", strsplit(year, "_")[[1]][2]))
+  
+  # Loop through each month
+  for (month in names(sorted_data_lists[[year]])) {
+    # Construct the layer names based on the month
+    ppt_name <- paste0("PPT", sprintf("%02d", match(month, month.name)))
+    eref_name <- paste0("Eref", sprintf("%02d", match(month, month.name)))
+    
+    # Extract raster layers for the current month
+    ppt <- sorted_data_lists[[year]][[month]][[ppt_name]]
+    eref <- sorted_data_lists[[year]][[month]][[eref_name]]
+
+    # Calculate AET
+    aet <- calculate_aet(ppt, eref)
+    
+    # Define the filename for saving
+    month_num <- match(month, month.name) # Get numeric month
+    filename <- paste0("AET_", year_num, "_", sprintf("%02d", month_num), ".tif")
+    
+    # Save the raster
+    terra::writeRaster(aet, filename, overwrite = TRUE)
+  }
+}
+```
+
+## Extracting AET values
+
+We need to extract values from each of the monthly raster layers containing AET values. AET values are in mm, so will need to sum values from each cell for each month, add them to a single dataframe, and then export to a xlsx file.
+
+```{r}
+library(lubridate)  # For date operations
+library(openxlsx)
+
+file_path <- "C:/Users/taypo/OneDrive/Documents/GitHub/Adams_glacier_study/Zhang_AET"
+
+aet_files <- list.files(path = file_path, full.names = TRUE)
+
+monthly_aet <- data.frame(month = character(), aet = numeric())
+
+# Loop through each raster file
+for (aet_file in aet_files) {
+  # Extract year and month from the raster file name
+  filename_parts <- strsplit(basename(aet_file), "_")[[1]]
+  year <- as.numeric(filename_parts[2])
+  month <- as.numeric(sub("\\.tif$", "", filename_parts[3]))
+  
+  # Remove ".tif" extension from month
+  file_date_str <- paste(year, month, "01", sep = "-")
+  
+  # Create a date object
+  file_date <- as.Date(file_date_str)
+  
+  # Read the raster
+  rast <- rast(aet_file)
+  
+  # Extract values and sum them
+  sum_value <- sum(values(rast), na.rm = TRUE)
+  
+  # Add the summed values to the data frame
+  monthly_aet <- rbind(monthly_aet, data.frame(month = file_date, aet = sum_value))
+}
+
+# Write the data frame to an Excel file
+write.xlsx(monthly_aet, "monthly_aet.xlsx", rowNames = FALSE)
+
+```
+
+## Combing data 
+
+Now we need to add precip data, aet, and discharge data into one dataframe. The discharge data is recorded in daily increments, so these values will need to be summed by month. Furthermore, the discharge is in m\^3/s; therefore, this will need to be converted into mm.
+
+```{r}
+library(readxl)
+library(dplyr)
+
+adams_discharge <- read_excel("C:/Users/taypo/OneDrive/Documents/Grad Studies/Graduate Research/mDMC/Excel data/Adams_Discharge_1970_2021.xlsx")
+
+# Convert date column to Date format
+adams_discharge$Date <- as.Date(adams_discharge$Date)
+
+# Now, you can proceed with the mutate operation
+adams_discharge <- adams_discharge %>%
+   mutate(year = lubridate::year(Date),
+          month = lubridate::month(Date, label = TRUE))
+
+# Group by year and month, then summarize the values
+monthly_discharge <- adams_discharge %>%
+  group_by(year, month) %>%
+  summarise(discharge = sum(`Discharge (m3/s)`, na.rm = TRUE))
+
+# Output the result
+print(monthly_discharge)
+
+monthly_discharge$discharge <- monthly_discharge$discharge 
+
+monthly_aet <- read_excel("C:/Users/taypo/OneDrive/Documents/GitHub/Adams_glacier_study/monthly_aet.xlsx")
+
+
+```
