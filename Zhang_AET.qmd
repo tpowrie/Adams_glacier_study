@@ -110,10 +110,10 @@ for (aet_file in aet_files) {
   rast <- rast(aet_file)
   
   # Extract values and sum them
-  sum_value <- sum(values(rast), na.rm = TRUE)
+  ave_value <- mean(values(rast), na.rm = TRUE)
   
   # Add the summed values to the data frame
-  monthly_aet <- rbind(monthly_aet, data.frame(month = file_date, aet = sum_value))
+  monthly_aet <- rbind(monthly_aet, data.frame(month = file_date, aet = ave_value))
 }
 
 # Write the data frame to an Excel file
@@ -151,8 +151,8 @@ for (year in names(sorted_ppt_list)) {
   for (month in names(sorted_ppt_list[[year]])) {
     ppt_name <- paste0("PPT", sprintf("%02d", match(month, month.name)))
     rast_ppt <- sorted_ppt_list[[year]][[month]][[ppt_name]]
-    sum_ppt <- sum(values(rast_ppt), na.rm = TRUE)  
-    monthly_ppt <- rbind(monthly_ppt, data.frame(month, precip = sum_ppt))
+    ave_ppt <- mean(values(rast_ppt), na.rm = TRUE)  
+    monthly_ppt <- rbind(monthly_ppt, data.frame(month, precip = ave_ppt))
   }
 }
 
@@ -175,7 +175,7 @@ adams_discharge <- read_excel("C:/Users/taypo/OneDrive/Documents/Grad Studies/Gr
 # Convert date column to Date format
 adams_discharge$Date <- as.Date(adams_discharge$Date)
 
-adams_discharge$`Discharge (mm/day)` <- ((adams_discharge$`Discharge (m3/s)` / 3137132572.000) * 86400 * 1000) * 7904.1
+adams_discharge$`Discharge (mm/day)` <- ((adams_discharge$`Discharge (m3/s)` / 3137132572.000) * 86400 * 1000)
 
 # Now, you can proceed with the mutate operation
 adams_discharge <- adams_discharge %>%
@@ -197,7 +197,7 @@ effective_precip <- cbind(monthly_aet, monthly_ppt)
 effective_precip <- effective_precip[,-3]
 
 effective_precip <- effective_precip %>% 
-  mutate(ppt_effective = precip - `aet (mm)`)
+  mutate(ppt_effective = precip - `aet`)
 
 effective_precip_70_21 <- head(effective_precip, -12)
 
@@ -229,20 +229,82 @@ mDMC_hydro_yr <- mDMC_hydro_yr[-c(1,27,28),]
 mDMC_hydro_yr$cumulative_precip <- cumsum(mDMC_hydro_yr$ppt_effective)
 mDMC_hydro_yr$cumulative_discharge <- cumsum(mDMC_hydro_yr$discharge)
 
+write.xlsx(mDMC_hydro_yr, "mDMC_hydro_yr.xlsx", rowNames = FALSE)
+
 ggplot(mDMC_hydro_yr, aes(x = cumulative_precip, y = cumulative_discharge)) +
   geom_point() +
-  labs(x = "Cumulative Discharge", y = "Cumulative Preip", title = "Adams mDMC")
+  labs(x = "Cumulative Precipitation", y = "Cumulative Discharge", title = "Adams mDMC")
 
-install.packages("changepoint")
-library(changepoint)
+```
 
-# Assume your data frame mDMC_hydro_yr contains columns cumulative_discharge and cumulative_precip
+```{r}
+library(tidyverse)      
+library(changepoint)    
+library(zoo)
+library(segmented)
 
-# Perform Pettitt test for detecting changepoints
-pettitt_result <- cpt.mean(mDMC_hydro_yr$cumulative_discharge, test.statistic = "Pettitt")
+mDMC_lm <- lm(cumulative_discharge ~ cumulative_precip, data = mDMC_hydro_yr)
+summary(mDMC_lm)
+
+davies.test(mDMC_lm, k=10)
+
+mDMC_hydro_yr$pettit <- mDMC_hydro_yr$discharge - mDMC_hydro_yr$ppt_effective
+
+pettit_test <- pettitt.test(mDMC_hydro_yr$pettit)
+summary(pettit_test)
 
 
-# Print the detected changepoints
-pettitt_result
+mDMC_hydro_yr$hydro_year <- as.Date(mDMC_hydro_yr$hydro_year,)
 
+ts_mDMC <- zoo(mDMC_hydro_yr$cumulative_discharge / mDMC_hydro_yr$cumulative_precip, mDMC_hydro_yr$hydro_year)
+
+View(ts_mDMC)
+
+break.point <- cpt.meanvar(ts_mDMC, method = "PELT")
+
+BP <- attr(break.point, "cpt.meanvar")$indexes
+
+ggplot(mDMC_hydro_yr, aes(x = cumulative_precip, y = cumulative_discharge, color = hydro_year)) +
+  geom_point(size = 1) +
+  scale_color_gradient(low = "blue", high = "red") +
+  geom_vline(xintercept = mDMC_hydro_yr$cumulative_precip[BP], linetype = "dashed") +
+  labs(x = "Cumulative Effective Precipitation (mm)",
+       y = "Cumulative Discharge (mm)",
+       color = "Hydro Year") +
+  theme_minimal()
+
+library(segmented)
+
+# fit the segmented regression model
+
+?segmented
+
+seg.model <- lm(cumulative_discharge ~ cumulative_precip, data = mDMC_hydro_yr)
+seg.fit <- segmented(seg.model, seg.Z = ~ cumulative_precip)
+
+# plot the segmented regression line with data
+plot(cumulative_discharge ~ cumulative_precip, data = mDMC_hydro_yr, pch = 16, cex = 0.5, col = "gray")
+lines(seg.fit, col = "red", lwd = 2)
+
+# add vertical line for the break point
+abline(v = seg.fit$psi, lty = "dashed")
+
+# show the segmented regression summary
+summary(seg.fit)
+
+library(trend)
+
+?pettitt.test
+
+
+diffs <- mDMC_hydro_yr$cumulative_discharge - mDMC_hydro_yr$cumulative_precip
+
+# Compute the Pettitt test statistic and p-value
+pettitt_result <- pettitt.test(diffs)
+test_statistic <- pettitt_result$statistic
+p_value <- pettitt_result$p.value
+
+# Plot the data and the breaking point
+plot(mDMC_hydro_yr$cumulative_discharge ~ mDMC_hydro_yr$cumulative_precip)
+abline(v = which.max(abs(diff(diffs))) + 1, col = "red")
 ```
