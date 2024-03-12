@@ -9,16 +9,131 @@ editor: visual
 First we will sort downloaded from ClimateBC:
 
 ```{r}
+library(terra)
 
-setwd("C:/Users/taypo/OneDrive/Documents/Grad Studies/Graduate Research/mDMC/Adams Raster Files"
-)
+folder_path <- ("C:/Users/taypo/OneDrive/Documents/Grad Studies/Graduate Research/mDMC/Adams Raster Files/Monthly Climate Rasters")
+
+year_folders <- dir(folder_path, full.names = TRUE)
+
+monthly_dirs <- lapply(year_folders, list.files, full.names = TRUE,
+                       pattern = "^Rad[0-9]{2}\\.asc$|^Tave[0-9]{2}\\.asc$|^PPT[0-9]{2}\\.asc$|^Tmax[0-9]{2}\\.asc$|^Tmin[0-9]{2}\\.asc$")
+
+iteration_table <- lapply(1:12, seq, to = 60, by = 12)
+
+sorted_data_lists <- lapply(monthly_dirs, function(x) {
+                            setNames(lapply(iteration_table, function(y) {
+                                            rast(x[y])
+                            }), month.name)
+})
+sorted_data_lists <- setNames(sorted_data_lists, basename(year_folders))
+
+calculate_pet <- function(rad, tave, tmin, tmax, ppt) {
+  pet <- rad * 0.0013 * 0.408 * (tave + 17.0) * (((tmax - tmin) - 0.0123 * ppt) ^ 0.76)
+  return(pet)
+}
+
+# Loop through each year
+for (year in names(sorted_data_lists)) {
+  # Loop through each month
+  for (month in names(sorted_data_lists[[year]])) {
+    # Construct the layer names based on the month
+    ppt_name <- paste0("PPT", sprintf("%02d", match(month, month.name)))
+    rad_name <- paste0("Rad", sprintf("%02d", match(month, month.name)))
+    tave_name <- paste0("Tave", sprintf("%02d", match(month, month.name)))
+    tmin_name <- paste0("Tmin", sprintf("%02d", match(month, month.name)))
+    tmax_name <- paste0("Tmax", sprintf("%02d", match(month, month.name)))
+    
+    # Extract raster layers for the current month
+    ppt <- sorted_data_lists[[year]][[month]][[ppt_name]]
+    rad <- sorted_data_lists[[year]][[month]][[rad_name]]
+    tave <- sorted_data_lists[[year]][[month]][[tave_name]]
+    tmin <- sorted_data_lists[[year]][[month]][[tmin_name]]
+    tmax <- sorted_data_lists[[year]][[month]][[tmax_name]]
+    
+    # Calculate PET
+    pet <- calculate_pet(rad, tave, tmin, tmax, ppt)
+    
+    # Define the filename for saving
+    filename <- paste0("PET_", year, "_", month, ".tif")
+    
+    # Save the raster
+    terra::writeRaster(pet, filename, overwrite = TRUE)
+  }
+}
+
+
+
+
+
+
+  for (i in seq_along(monthly_rasters)) {
+    layer_names <- names(monthly_rasters[[i]])
+    rad <- monthly_rasters[[i]][grep("Rad", layer_names)]
+    tave <- monthly_rasters[[i]][grep("Tave", layer_names)]
+    ppt <- monthly_rasters[[i]][grep("PPT", layer_names)]
+    
+    # Filter Tmax and Tmin layers for the same month
+    tmax <- monthly_rasters[[i]][grep("Tmax", layer_names)]
+    tmin <- monthly_rasters[[i]][grep("Tmin", layer_names)]
+  }
+    
+    
+    TD <- tmax - tmin
+    
+    PET_month <- 0.0013 * 0.408 * rad * (tave + 17.0) * ((TD - 0.0123 * ppt) ^ 0.76)
+  
+    writeRaster(PET_month, paste0("PET_", year, "_", sprintf("%02d", month_index), ".tif"), overwrite = TRUE)
+  }
+
 ```
 
 You can add options to executable code like this
 
 ```{r}
-#| echo: false
-2 * 2
+
+monthly_rasters <- lapply(year_folders, function(i) {
+  monthly_data <- list.files(i, 
+                             pattern = "^Rad[0-9]{2}\\.asc$|^Tave[0-9]{2}\\.asc$|^PPT[0-9]{2}\\.asc$|^Tmax[0-9]{2}\\.asc$|^Tmin[0-9]{2}\\.asc$",
+                             full.names = TRUE)
+  clim_data <- rast(monthly_data)
+})
+monthly_rasters <- setNames(monthly_rasters, basename(year_folders))
+
+for (file in monthly_data) {
+  # Read the raster file
+  raster_obj <- rast(file)
+  
+  # Print layer names for debugging
+  print(names(raster_obj))
+  
+  # Extract individual raster layers
+  rad <- raster_obj[[grep("Rad01", names(raster_obj))]]
+  tave <- raster_obj[[grep("Tave01", names(raster_obj))]]
+  ppt <- raster_obj[[grep("PPT01", names(raster_obj))]]
+  tmax <- raster_obj[[grep("Tmax01", names(raster_obj))]]
+  tmin <- raster_obj[[grep("Tmin01", names(raster_obj))]]
+  
+  # Further processing or analysis can be done with the extracted layers
+  # For example, you can perform calculations or save them as separate files
+  
+  # For now, let's just print the dimensions of the extracted layers
+  print(dim(rad))
+  print(dim(tave))
+  print(dim(ppt))
+  print(dim(tmax))
+  print(dim(tmin))
+}
+
+
+help("terra-package")
+
+raster22_08 <- c(monthly_rasters[[08]],monthly_rasters[[20]],monthly_rasters[[32]],monthly_rasters[[44]],monthly_rasters[[56]])
+
+raster22_08
+
+PET_2022_08 <- raster22_08[[2]] * 0.0013 * 0.408 * (raster22_08[[3]] + 17.0) * (((raster22_08[[4]] - raster22_08[[5]]) - 0.0123 * raster22_08[[1]]) ^ 0.76)
+
+PET_2022_08
 ```
 
 The `echo: false` option disables the printing of code (only output is displayed).
