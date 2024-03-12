@@ -1,0 +1,63 @@
+---
+title: "Adams hydrostn area & elevation"
+format: html
+editor: visual
+---
+
+## Defining study area
+
+### Hydrological Boundary
+
+First we must define the area of interest. The Adams hydrometric station near Squilax (08LD001) is at the outflow of Adams Lake; therefore, we will need to spatially define the watershed to encompass all land from which water flows to this point.
+
+```{r}
+install.packages("bcdata")
+
+library(bcdata)
+library(sf)
+
+hydro_area_search <- bcdc_search("hydrometric")
+View(hydro_area_search)
+
+bc_hydrostns <- bcdc_query_geodata(hydro_area_search[[3]]$id, crs = 3005) %>% 
+  collect()
+
+adams_hydrostn <- bc_hydrostns %>% 
+  filter(SOURCE_NAME == "ADAMS RIVER")
+
+st_write(adams_hydrostn, "adams_hydrostn.shp")
+```
+
+### Watershed Digital Elevation Model
+
+```{r}
+install.packages("bcmaps")
+install.packages("mapview")
+
+library(bcmaps)
+library(mapview)
+library(terra)
+
+adams_hydrostn_dem <- cded_terra(adams_hydrostn)
+
+crs(adams_hydrostn_dem)
+
+adams_dem_albers <- project(adams_hydrostn_dem, "epsg:3005")
+res(adams_dem_albers)
+
+resamp_grid <- rast(ext(adams_dem_albers), res = 20, crs = "epsg:3005")
+adams_dem_albers <- resample(adams_dem_albers, resamp_grid)
+plot(adams_dem_albers)
+
+adams_dem_mask <- mask(adams_dem_albers, vect(adams_hydrostn))
+
+writeRaster(adams_dem_mask, "Adams_hydrostn_DEM.tif", overwrite = TRUE)
+```
+
+### Daytime Length
+
+First, we must calculate daylight hours for the Adams Watershed. As the calculation is only refined to the nearest minute within the DMS coordinate system, we will use
+
+```{r}
+
+```
